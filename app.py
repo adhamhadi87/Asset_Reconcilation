@@ -189,18 +189,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-with st.sidebar:
-    st.header("⚙️ Sumber Data")
-    upload = st.file_uploader("Muat naik fail Excel terkini", type=["xlsx"])
-    if upload is not None:
-        file_bytes = upload.getvalue()
-        st.success(f"Menggunakan: {upload.name}")
-    elif DEFAULT_FILE.exists():
-        file_bytes = DEFAULT_FILE.read_bytes()
-        st.info("Menggunakan fail Asset.xlsx dalam aplikasi")
-    else:
-        st.warning("Sila muat naik fail Excel.")
-        st.stop()
+if DEFAULT_FILE.exists():
+    file_bytes = DEFAULT_FILE.read_bytes()
+else:
+    st.error("Fail Asset.xlsx tidak ditemui dalam folder aplikasi.")
+    st.stop()
 
 try:
     sap, easset, dim, compare = load_data(file_bytes)
@@ -208,53 +201,72 @@ except Exception as exc:
     st.error(f"Fail tidak dapat dibaca: {exc}")
     st.stop()
 
-with st.sidebar:
-    st.divider()
-    st.header("🔎 Penapis")
-    source_options = sorted(compare["Sumber Rekod"].dropna().unique())
-    status_options = sorted(compare["Status Padanan"].dropna().unique())
-    group_options = sorted(compare["Eval Group"].dropna().astype(str).unique())
-    office_options = sorted(compare.get("Detail 3", pd.Series(dtype=str)).dropna().astype(str).unique())
+# Nombor aset SAP dalam fail ini menggunakan format 9 digit.
+# Aset Alih: julat bermula 1 hingga 6. Aset Tak Ketara: julat bermula 7 hingga 9.
+compare["No Aset Numerik"] = pd.to_numeric(compare["No Aset SAP"], errors="coerce")
 
-    selected_source = st.multiselect("Sumber Rekod", source_options, default=source_options)
-    selected_status = st.multiselect("Status Padanan", status_options, default=status_options)
-    selected_group = st.multiselect("Eval Group", group_options)
-    selected_office = st.multiselect("Kategori Pejabat", office_options)
-    search = st.text_input("Cari nombor / deskripsi aset")
-    min_diff = st.number_input("Perbezaan minimum (RM)", min_value=0.0, value=0.0, step=100.0)
+with st.sidebar:
+    st.header("🔎 Penapis")
+
+    selected_category = st.selectbox(
+        "Kategori",
+        [
+            "Semua",
+            "Aset Alih",
+            "Aset Tak Ketara",
+        ],
+        index=0,
+    )
+    st.caption(
+        "Semua: 100000000–999999999  |  "
+        "Aset Alih: 100000000–699999999  |  "
+        "Aset Tak Ketara: 700000000–999999999"
+    )
+
+    ptj_options = sorted(
+        compare.get("Detail 3", pd.Series(dtype="string"))
+        .dropna()
+        .astype("string")
+        .str.strip()
+        .loc[lambda x: x.ne("")]
+        .unique()
+        .tolist()
+    )
+    selected_ptj = st.selectbox("PTJ", ["Semua"] + ptj_options, index=0)
 
 filtered = compare[
-    compare["Sumber Rekod"].isin(selected_source)
-    & compare["Status Padanan"].isin(selected_status)
-    & compare["Perbezaan Mutlak"].ge(min_diff)
+    compare["No Aset Numerik"].between(100000000, 999999999, inclusive="both")
 ].copy()
-if selected_group:
-    filtered = filtered[filtered["Eval Group"].astype(str).isin(selected_group)]
-if selected_office and "Detail 3" in filtered.columns:
-    filtered = filtered[filtered["Detail 3"].astype(str).isin(selected_office)]
-if search:
-    q = search.lower().strip()
-    searchable = filtered[[c for c in ["No Aset SAP", "Deskripsi Aset", "Jenama", "Lokasi", "No Siri Pendaftaran"] if c in filtered.columns]].fillna("").astype(str)
-    mask = searchable.apply(lambda col: col.str.lower().str.contains(q, regex=False)).any(axis=1)
-    filtered = filtered[mask]
 
-matched = (compare["Sumber Rekod"] == "SAP & eAsset").sum()
-sap_only = (compare["Sumber Rekod"] == "SAP Sahaja").sum()
-ea_only = (compare["Sumber Rekod"] == "eAsset Sahaja").sum()
-value_mismatch = (compare["Status Padanan"] == "Nilai Tidak Padan").sum()
-match_rate = matched / max(compare["No Aset SAP"].nunique(), 1) * 100
+if selected_category == "Aset Alih":
+    filtered = filtered[
+        filtered["No Aset Numerik"].between(100000000, 699999999, inclusive="both")
+    ]
+elif selected_category == "Aset Tak Ketara":
+    filtered = filtered[
+        filtered["No Aset Numerik"].between(700000000, 999999999, inclusive="both")
+    ]
+
+if selected_ptj != "Semua" and "Detail 3" in filtered.columns:
+    filtered = filtered[filtered["Detail 3"].astype("string").str.strip().eq(selected_ptj)]
+
+matched = (filtered["Sumber Rekod"] == "SAP & eAsset").sum()
+sap_only = (filtered["Sumber Rekod"] == "SAP Sahaja").sum()
+ea_only = (filtered["Sumber Rekod"] == "eAsset Sahaja").sum()
+value_mismatch = (filtered["Status Padanan"] == "Nilai Tidak Padan").sum()
+match_rate = matched / max(filtered["No Aset SAP"].nunique(), 1) * 100
 
 m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Aset Unik", f"{compare['No Aset SAP'].nunique():,}")
+m1.metric("Aset Unik", f"{filtered['No Aset SAP'].nunique():,}")
 m2.metric("Padan SAP & eAsset", f"{matched:,}", f"{match_rate:.1f}%")
 m3.metric("SAP Sahaja", f"{sap_only:,}")
 m4.metric("eAsset Sahaja", f"{ea_only:,}")
 m5.metric("Nilai Tidak Padan", f"{value_mismatch:,}")
 
 st.caption(
-    f"Jumlah nilai perolehan SAP: **{fmt_rm(compare['Nilai Perolehan SAP'].sum())}**  ·  "
-    f"Jumlah nilai eAsset: **{fmt_rm(compare['Nilai eAsset'].sum())}**  ·  "
-    f"Jumlah nilai buku SAP: **{fmt_rm(compare['Nilai Buku SAP'].sum())}**"
+    f"Jumlah nilai perolehan SAP: **{fmt_rm(filtered['Nilai Perolehan SAP'].sum())}**  ·  "
+    f"Jumlah nilai eAsset: **{fmt_rm(filtered['Nilai eAsset'].sum())}**  ·  "
+    f"Jumlah nilai buku SAP: **{fmt_rm(filtered['Nilai Buku SAP'].sum())}**"
 )
 
 tab1, tab2, tab3, tab4 = st.tabs(
@@ -264,7 +276,7 @@ tab1, tab2, tab3, tab4 = st.tabs(
 with tab1:
     c1, c2 = st.columns(2)
     status_summary = (
-        compare.groupby("Status Padanan", as_index=False)["No Aset SAP"]
+        filtered.groupby("Status Padanan", as_index=False)["No Aset SAP"]
         .nunique()
         .rename(columns={"No Aset SAP": "Bilangan"})
     )
@@ -279,7 +291,7 @@ with tab1:
     c1.plotly_chart(fig_status, use_container_width=True)
 
     source_summary = (
-        compare.groupby("Sumber Rekod", as_index=False)["No Aset SAP"]
+        filtered.groupby("Sumber Rekod", as_index=False)["No Aset SAP"]
         .nunique()
         .rename(columns={"No Aset SAP": "Bilangan"})
     )
@@ -294,12 +306,12 @@ with tab1:
 
     c3, c4 = st.columns(2)
     by_group = (
-        compare.groupby(["Eval Group", "Status Padanan"], dropna=False, as_index=False)["No Aset SAP"]
+        filtered.groupby(["Eval Group", "Status Padanan"], dropna=False, as_index=False)["No Aset SAP"]
         .nunique()
         .rename(columns={"No Aset SAP": "Bilangan"})
     )
     top_groups = (
-        compare.groupby("Eval Group")["No Aset SAP"].nunique().nlargest(15).index
+        filtered.groupby("Eval Group")["No Aset SAP"].nunique().nlargest(15).index
     )
     by_group = by_group[by_group["Eval Group"].isin(top_groups)]
     fig_group = px.bar(
@@ -312,7 +324,7 @@ with tab1:
     c3.plotly_chart(fig_group, use_container_width=True)
 
     year_summary = (
-        compare.dropna(subset=["Tahun Beli"])
+        filtered.dropna(subset=["Tahun Beli"])
         .groupby("Tahun Beli", as_index=False)["No Aset SAP"]
         .nunique()
         .rename(columns={"No Aset SAP": "Bilangan"})
@@ -356,11 +368,11 @@ with tab2:
     )
 
 with tab3:
-    issue = compare[compare["Status Padanan"] != "Padan"].copy()
+    issue = filtered[filtered["Status Padanan"] != "Padan"].copy()
     i1, i2, i3 = st.columns(3)
     i1.metric("Jumlah Pengecualian", f"{len(issue):,}")
     i2.metric("Jumlah Perbezaan Mutlak", fmt_rm(issue["Perbezaan Mutlak"].sum()))
-    dup_ea = (easset.groupby("No Aset SAP").size() > 1).sum()
+    dup_ea = (filtered[filtered["Bil Rekod eAsset"].fillna(0) > 1]["No Aset SAP"].nunique())
     i3.metric("No. Aset Duplicate eAsset", f"{dup_ea:,}")
 
     issue_type = (
@@ -388,7 +400,7 @@ with tab3:
     )
 
     st.subheader("Rekod Duplicate dalam eAsset")
-    duplicate_numbers = easset.groupby("No Aset SAP").size().loc[lambda s: s > 1].index
+    duplicate_numbers = filtered.loc[filtered["Bil Rekod eAsset"].fillna(0) > 1, "No Aset SAP"]
     duplicate_rows = easset[easset["No Aset SAP"].isin(duplicate_numbers)].sort_values("No Aset SAP")
     st.dataframe(duplicate_rows, use_container_width=True, hide_index=True, height=420)
 
@@ -402,4 +414,4 @@ with tab4:
         st.dataframe(dim, use_container_width=True, hide_index=True, height=600)
 
 st.divider()
-st.caption("Dashboard ini mengagregat rekod berdasarkan No. Aset SAP. Toleransi padanan nilai ditetapkan pada RM1.00.")
+st.caption("Dashboard mengagregat rekod berdasarkan No. Aset SAP. PTJ dirujuk daripada Column D (Detail 3), sheet DIM Eva grp 1 melalui padanan Eval Group. Toleransi padanan nilai ialah RM1.00.")
