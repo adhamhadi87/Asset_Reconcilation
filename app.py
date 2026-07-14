@@ -148,7 +148,47 @@ def load_data(file_bytes: bytes):
     )
     compare.drop(columns="_merge", inplace=True)
 
-    compare["Eval Group"] = compare["Eval Group"].fillna(compare["Eval Group eAsset"])
+    # Kekalkan Eval Group daripada kedua-dua sistem secara berasingan.
+    compare = compare.rename(columns={"Eval Group": "Eval Group SAP"})
+
+    dim_map = dim[["Eval Group", "Detail", "Detail 2", "Detail 3"]].drop_duplicates("Eval Group")
+    sap_dim = dim_map.rename(
+        columns={
+            "Eval Group": "Eval Group SAP",
+            "Detail": "Klasifikasi SAP",
+            "Detail 2": "Zon SAP",
+            "Detail 3": "PTJ SAP",
+        }
+    )
+    ea_dim = dim_map.rename(
+        columns={
+            "Eval Group": "Eval Group eAsset",
+            "Detail": "Klasifikasi eAsset",
+            "Detail 2": "Zon eAsset",
+            "Detail 3": "PTJ eAsset",
+        }
+    )
+    compare = compare.merge(sap_dim, on="Eval Group SAP", how="left")
+    compare = compare.merge(ea_dim, on="Eval Group eAsset", how="left")
+
+    # Kolum gabungan digunakan untuk paparan/filter PTJ sahaja.
+    compare["Eval Group"] = compare["Eval Group SAP"].fillna(compare["Eval Group eAsset"])
+    compare["Detail"] = compare["Klasifikasi SAP"].fillna(compare["Klasifikasi eAsset"])
+    compare["Detail 3"] = compare["PTJ SAP"].fillna(compare["PTJ eAsset"])
+
+    both = compare["Sumber Rekod"].eq("SAP & eAsset")
+    valid_ptj = compare["PTJ SAP"].notna() & compare["PTJ eAsset"].notna()
+    valid_eval = compare["Eval Group SAP"].notna() & compare["Eval Group eAsset"].notna()
+
+    compare["Berlainan Lokasi"] = both & valid_ptj & (
+        compare["PTJ SAP"].astype("string").str.strip()
+        != compare["PTJ eAsset"].astype("string").str.strip()
+    )
+    compare["Salah Klasifikasi"] = both & valid_eval & (
+        compare["Eval Group SAP"].astype("string").str.strip()
+        != compare["Eval Group eAsset"].astype("string").str.strip()
+    )
+
     compare["Perbezaan Nilai"] = compare["Nilai Perolehan SAP"].fillna(0) - compare["Nilai eAsset"].fillna(0)
     compare["Perbezaan Mutlak"] = compare["Perbezaan Nilai"].abs()
 
@@ -162,9 +202,6 @@ def load_data(file_bytes: bytes):
         ["Tiada dalam eAsset", "Tiada dalam SAP", "Padan"],
         default="Nilai Tidak Padan",
     )
-
-    dim_cols = [c for c in ["Eval Group", "Detail", "Detail 2", "Detail 3"] if c in dim.columns]
-    compare = compare.merge(dim[dim_cols].drop_duplicates("Eval Group"), on="Eval Group", how="left")
 
     # Tahun aset untuk analisis umur rekod eAsset.
     compare["Tahun Beli"] = compare["Tarikh Beli"].dt.year.astype("Int64")
@@ -217,7 +254,6 @@ with st.sidebar:
         ],
         index=0,
     )
-
     ptj_options = sorted(
         compare.get("Detail 3", pd.Series(dtype="string"))
         .dropna()
@@ -245,18 +281,17 @@ elif selected_category == "Aset Tak Ketara":
 if selected_ptj != "Semua" and "Detail 3" in filtered.columns:
     filtered = filtered[filtered["Detail 3"].astype("string").str.strip().eq(selected_ptj)]
 
-matched = (filtered["Sumber Rekod"] == "SAP & eAsset").sum()
-sap_only = (filtered["Sumber Rekod"] == "SAP Sahaja").sum()
-ea_only = (filtered["Sumber Rekod"] == "eAsset Sahaja").sum()
-value_mismatch = (filtered["Status Padanan"] == "Nilai Tidak Padan").sum()
-match_rate = matched / max(filtered["No Aset SAP"].nunique(), 1) * 100
+matched = filtered.loc[filtered["Sumber Rekod"].eq("SAP & eAsset"), "No Aset SAP"].nunique()
+sap_only = filtered.loc[filtered["Sumber Rekod"].eq("SAP Sahaja"), "No Aset SAP"].nunique()
+ea_only = filtered.loc[filtered["Sumber Rekod"].eq("eAsset Sahaja"), "No Aset SAP"].nunique()
+location_mismatch = filtered.loc[filtered["Berlainan Lokasi"], "No Aset SAP"].nunique()
+classification_mismatch = filtered.loc[filtered["Salah Klasifikasi"], "No Aset SAP"].nunique()
 
-m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Aset Unik", f"{filtered['No Aset SAP'].nunique():,}")
-m2.metric("Padan SAP & eAsset", f"{matched:,}", f"{match_rate:.1f}%")
-m3.metric("SAP Sahaja", f"{sap_only:,}")
-m4.metric("eAsset Sahaja", f"{ea_only:,}")
-m5.metric("Nilai Tidak Padan", f"{value_mismatch:,}")
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Jumlah Aset di SAP tetapi Tiada di eAsset", f"{sap_only:,}")
+m2.metric("Jumlah Aset di eAsset tetapi Tiada di SAP", f"{ea_only:,}")
+m3.metric("Jumlah Aset Berlainan Lokasi", f"{location_mismatch:,}")
+m4.metric("Aset Salah Klasifikasi", f"{classification_mismatch:,}")
 
 st.caption(
     f"Jumlah nilai perolehan SAP: **{fmt_rm(filtered['Nilai Perolehan SAP'].sum())}**  ·  "
@@ -336,8 +371,10 @@ with tab1:
 with tab2:
     st.subheader("Senarai Perbandingan Aset")
     display_cols = [
-        "No Aset SAP", "Status Padanan", "Sumber Rekod", "Eval Group", "Detail", "Detail 3",
-        "Deskripsi Aset", "No Siri Pendaftaran", "Jenama", "Lokasi", "Pegawai Penempatan",
+        "No Aset SAP", "Status Padanan", "Sumber Rekod", "Eval Group SAP", "Eval Group eAsset",
+        "Klasifikasi SAP", "Klasifikasi eAsset", "PTJ SAP", "PTJ eAsset",
+        "Berlainan Lokasi", "Salah Klasifikasi", "Deskripsi Aset", "No Siri Pendaftaran",
+        "Jenama", "Lokasi", "Pegawai Penempatan",
         "Nilai Perolehan SAP", "Nilai eAsset", "Perbezaan Nilai", "Nilai Buku SAP",
         "Bil Rekod SAP", "Bil Rekod eAsset", "Tarikh Beli"
     ]
@@ -381,6 +418,30 @@ with tab3:
         column_config={"Perbezaan_RM": st.column_config.NumberColumn("Perbezaan (RM)", format="RM %.2f")},
     )
 
+    st.subheader("Aset Berlainan Lokasi")
+    lokasi_cols = [c for c in [
+        "No Aset SAP", "Eval Group SAP", "PTJ SAP", "Eval Group eAsset", "PTJ eAsset",
+        "Deskripsi Aset", "Lokasi", "Pegawai Penempatan"
+    ] if c in filtered.columns]
+    st.dataframe(
+        filtered.loc[filtered["Berlainan Lokasi"], lokasi_cols],
+        use_container_width=True,
+        hide_index=True,
+        height=350,
+    )
+
+    st.subheader("Aset Salah Klasifikasi")
+    klasifikasi_cols = [c for c in [
+        "No Aset SAP", "Eval Group SAP", "Klasifikasi SAP", "Eval Group eAsset",
+        "Klasifikasi eAsset", "PTJ SAP", "PTJ eAsset", "Deskripsi Aset", "Jenis"
+    ] if c in filtered.columns]
+    st.dataframe(
+        filtered.loc[filtered["Salah Klasifikasi"], klasifikasi_cols],
+        use_container_width=True,
+        hide_index=True,
+        height=350,
+    )
+
     st.subheader("Top 50 Perbezaan Nilai Tertinggi")
     top_diff = issue.nlargest(50, "Perbezaan Mutlak")
     st.dataframe(
@@ -409,4 +470,4 @@ with tab4:
         st.dataframe(dim, use_container_width=True, hide_index=True, height=600)
 
 st.divider()
-st.caption("Dashboard mengagregat rekod berdasarkan No. Aset SAP. PTJ dirujuk daripada Column D (Detail 3), sheet DIM Eva grp 1 melalui padanan Eval Group. Toleransi padanan nilai ialah RM1.00.")
+st.caption("Semua KPI dibandingkan menggunakan No. Aset sebagai key utama. Lokasi dibandingkan melalui PTJ (Detail 3), manakala salah klasifikasi ditentukan melalui perbezaan Eval Group SAP dan eAsset.")
