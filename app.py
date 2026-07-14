@@ -177,16 +177,20 @@ def load_data(file_bytes: bytes):
     compare["Detail 3"] = compare["PTJ SAP"].fillna(compare["PTJ eAsset"])
 
     both = compare["Sumber Rekod"].eq("SAP & eAsset")
-    valid_ptj = compare["PTJ SAP"].notna() & compare["PTJ eAsset"].notna()
     valid_eval = compare["Eval Group SAP"].notna() & compare["Eval Group eAsset"].notna()
+    valid_class = compare["Klasifikasi SAP"].notna() & compare["Klasifikasi eAsset"].notna()
 
-    compare["Berlainan Lokasi"] = both & valid_ptj & (
-        compare["PTJ SAP"].astype("string").str.strip()
-        != compare["PTJ eAsset"].astype("string").str.strip()
-    )
-    compare["Salah Klasifikasi"] = both & valid_eval & (
+    # Lokasi dibandingkan terus melalui nilai Eval Group dalam sheet SAP dan eAsset.
+    # Perbandingan hanya dibuat bagi No. Aset yang wujud dalam kedua-dua sistem.
+    compare["Berlainan Lokasi"] = both & valid_eval & (
         compare["Eval Group SAP"].astype("string").str.strip()
         != compare["Eval Group eAsset"].astype("string").str.strip()
+    )
+
+    # Salah klasifikasi dibandingkan melalui klasifikasi yang dipetakan daripada DIM Eval Group.
+    compare["Salah Klasifikasi"] = both & valid_class & (
+        compare["Klasifikasi SAP"].astype("string").str.strip()
+        != compare["Klasifikasi eAsset"].astype("string").str.strip()
     )
 
     compare["Perbezaan Nilai"] = compare["Nilai Perolehan SAP"].fillna(0) - compare["Nilai eAsset"].fillna(0)
@@ -470,4 +474,4 @@ with tab4:
         st.dataframe(dim, use_container_width=True, hide_index=True, height=600)
 
 st.divider()
-st.caption("Semua KPI dibandingkan menggunakan No. Aset sebagai key utama. Lokasi dibandingkan melalui PTJ (Detail 3), manakala salah klasifikasi ditentukan melalui perbezaan Eval Group SAP dan eAsset.")
+st.caption("Semua KPI dibandingkan menggunakan No. Aset sebagai key utama. Aset berlainan lokasi ditentukan melalui perbezaan Eval Group antara sheet SAP dan eAsset.")
