@@ -177,16 +177,20 @@ def load_data(file_bytes: bytes):
     compare["Detail 3"] = compare["PTJ SAP"].fillna(compare["PTJ eAsset"])
 
     both = compare["Sumber Rekod"].eq("SAP & eAsset")
-    valid_ptj = compare["PTJ SAP"].notna() & compare["PTJ eAsset"].notna()
     valid_eval = compare["Eval Group SAP"].notna() & compare["Eval Group eAsset"].notna()
+    valid_class = compare["Klasifikasi SAP"].notna() & compare["Klasifikasi eAsset"].notna()
 
-    compare["Berlainan Lokasi"] = both & valid_ptj & (
-        compare["PTJ SAP"].astype("string").str.strip()
-        != compare["PTJ eAsset"].astype("string").str.strip()
-    )
-    compare["Salah Klasifikasi"] = both & valid_eval & (
+    # Lokasi dibandingkan terus melalui nilai Eval Group dalam sheet SAP dan eAsset.
+    # Perbandingan hanya dibuat bagi No. Aset yang wujud dalam kedua-dua sistem.
+    compare["Berlainan Lokasi"] = both & valid_eval & (
         compare["Eval Group SAP"].astype("string").str.strip()
         != compare["Eval Group eAsset"].astype("string").str.strip()
+    )
+
+    # Salah klasifikasi dibandingkan melalui klasifikasi yang dipetakan daripada DIM Eval Group.
+    compare["Salah Klasifikasi"] = both & valid_class & (
+        compare["Klasifikasi SAP"].astype("string").str.strip()
+        != compare["Klasifikasi eAsset"].astype("string").str.strip()
     )
 
     compare["Perbezaan Nilai"] = compare["Nilai Perolehan SAP"].fillna(0) - compare["Nilai eAsset"].fillna(0)
@@ -205,47 +209,7 @@ def load_data(file_bytes: bytes):
 
     # Tahun aset untuk analisis umur rekod eAsset.
     compare["Tahun Beli"] = compare["Tarikh Beli"].dt.year.astype("Int64")
-
-    # Detail berlainan lokasi dikira pada peringkat rekod/baris asal.
-    # Setiap rekod SAP dipadankan dengan setiap rekod eAsset yang mempunyai No. Aset sama.
-    # Kaedah ini menghasilkan 60 rekod bagi keseluruhan fail semasa.
-    sap_location = sap[[
-        "No Aset SAP", "Eval Group", "Deskripsi Aset", "Deskripsi Ringkas"
-    ]].copy()
-    sap_location = sap_location.rename(columns={"Eval Group": "Eval Group SAP"})
-
-    easset_location_cols = [
-        "No Aset SAP", "Eval Group", "No Siri Pendaftaran", "Jenis",
-        "Jenama", "Lokasi", "Pegawai Penempatan"
-    ]
-    easset_location = easset[easset_location_cols].copy()
-    easset_location = easset_location.rename(columns={"Eval Group": "Eval Group eAsset"})
-
-    location_detail = sap_location.merge(
-        easset_location, on="No Aset SAP", how="inner"
-    )
-    location_detail["Eval Group SAP"] = (
-        location_detail["Eval Group SAP"].astype("string").str.strip()
-    )
-    location_detail["Eval Group eAsset"] = (
-        location_detail["Eval Group eAsset"].astype("string").str.strip()
-    )
-    location_detail = location_detail[
-        location_detail["Eval Group SAP"].notna()
-        & location_detail["Eval Group eAsset"].notna()
-        & location_detail["Eval Group SAP"].ne(location_detail["Eval Group eAsset"])
-    ].copy()
-
-    location_detail = location_detail.merge(sap_dim, on="Eval Group SAP", how="left")
-    location_detail = location_detail.merge(ea_dim, on="Eval Group eAsset", how="left")
-    location_detail["No Aset Numerik"] = pd.to_numeric(
-        location_detail["No Aset SAP"], errors="coerce"
-    )
-    location_detail["PTJ Penapis"] = (
-        location_detail["PTJ SAP"].fillna(location_detail["PTJ eAsset"])
-    )
-
-    return sap, easset, dim, compare, location_detail
+    return sap, easset, dim, compare
 
 
 def fmt_rm(value):
@@ -273,7 +237,7 @@ else:
     st.stop()
 
 try:
-    sap, easset, dim, compare, location_detail = load_data(file_bytes)
+    sap, easset, dim, compare = load_data(file_bytes)
 except Exception as exc:
     st.error(f"Fail tidak dapat dibaca: {exc}")
     st.stop()
@@ -324,24 +288,7 @@ if selected_ptj != "Semua" and "Detail 3" in filtered.columns:
 matched = filtered.loc[filtered["Sumber Rekod"].eq("SAP & eAsset"), "No Aset SAP"].nunique()
 sap_only = filtered.loc[filtered["Sumber Rekod"].eq("SAP Sahaja"), "No Aset SAP"].nunique()
 ea_only = filtered.loc[filtered["Sumber Rekod"].eq("eAsset Sahaja"), "No Aset SAP"].nunique()
-filtered_location = location_detail[
-    location_detail["No Aset Numerik"].between(100000000, 999999999, inclusive="both")
-].copy()
-if selected_category == "Aset Alih":
-    filtered_location = filtered_location[
-        filtered_location["No Aset Numerik"].between(100000000, 699999999, inclusive="both")
-    ]
-elif selected_category == "Aset Tak Ketara":
-    filtered_location = filtered_location[
-        filtered_location["No Aset Numerik"].between(700000000, 999999999, inclusive="both")
-    ]
-if selected_ptj != "Semua":
-    filtered_location = filtered_location[
-        filtered_location["PTJ Penapis"].astype("string").str.strip().eq(selected_ptj)
-    ]
-
-# KPI lokasi mengira bilangan rekod/baris, selaras dengan working (60 rekod bagi Semua).
-location_mismatch = len(filtered_location)
+location_mismatch = filtered.loc[filtered["Berlainan Lokasi"], "No Aset SAP"].nunique()
 classification_mismatch = filtered.loc[filtered["Salah Klasifikasi"], "No Aset SAP"].nunique()
 
 m1, m2, m3, m4 = st.columns(4)
@@ -480,13 +427,8 @@ with tab3:
         "No Aset SAP", "Eval Group SAP", "PTJ SAP", "Eval Group eAsset", "PTJ eAsset",
         "Deskripsi Aset", "Lokasi", "Pegawai Penempatan"
     ] if c in filtered.columns]
-    lokasi_cols = [c for c in [
-        "No Aset SAP", "Eval Group SAP", "PTJ SAP", "Eval Group eAsset", "PTJ eAsset",
-        "Deskripsi Aset", "Deskripsi Ringkas", "No Siri Pendaftaran",
-        "Jenis", "Jenama", "Lokasi", "Pegawai Penempatan"
-    ] if c in filtered_location.columns]
     st.dataframe(
-        filtered_location[lokasi_cols],
+        filtered.loc[filtered["Berlainan Lokasi"], lokasi_cols],
         use_container_width=True,
         hide_index=True,
         height=350,
@@ -532,4 +474,4 @@ with tab4:
         st.dataframe(dim, use_container_width=True, hide_index=True, height=600)
 
 st.divider()
-st.caption("Semua KPI menggunakan No. Aset sebagai key utama. Jumlah Aset Berlainan Lokasi mengira bilangan rekod/baris yang mempunyai Eval Group SAP berbeza daripada Eval Group eAsset; jumlah keseluruhan fail semasa ialah 60 rekod.")
+st.caption("Semua KPI dibandingkan menggunakan No. Aset sebagai key utama. Aset berlainan lokasi ditentukan melalui perbezaan Eval Group antara sheet SAP dan eAsset.")
