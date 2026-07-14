@@ -217,11 +217,6 @@ with st.sidebar:
         ],
         index=0,
     )
-    st.caption(
-        "Semua: 100000000–999999999  |  "
-        "Aset Alih: 100000000–699999999  |  "
-        "Aset Tak Ketara: 700000000–999999999"
-    )
 
     ptj_options = sorted(
         compare.get("Detail 3", pd.Series(dtype="string"))
