@@ -207,14 +207,49 @@ ptj_values = pd.concat(
 )
 ptj_options = sorted(clean_text(ptj_values).dropna().unique().tolist())
 
+if "chart_selected_ptj" not in st.session_state:
+    st.session_state["chart_selected_ptj"] = None
+if "chart_selected_source" not in st.session_state:
+    st.session_state["chart_selected_source"] = None
+
+
+def clear_chart_selection():
+    st.session_state["chart_selected_ptj"] = None
+    st.session_state["chart_selected_source"] = None
+
+
+def handle_sap_chart_selection():
+    event = st.session_state.get("sap_bar_chart", {})
+    points = event.get("selection", {}).get("points", []) if event else []
+    if points:
+        st.session_state["chart_selected_ptj"] = points[0].get("x")
+        st.session_state["chart_selected_source"] = "SAP"
+
+
+def handle_easset_chart_selection():
+    event = st.session_state.get("easset_bar_chart", {})
+    points = event.get("selection", {}).get("points", []) if event else []
+    if points:
+        st.session_state["chart_selected_ptj"] = points[0].get("x")
+        st.session_state["chart_selected_source"] = "eAsset"
+
+
 with st.sidebar:
     st.header("🔎 Penapis")
     selected_category = st.selectbox(
         "Kategori",
         ["Semua", "Aset Alih", "Aset Tak Ketara"],
         index=0,
+        key="category_filter",
+        on_change=clear_chart_selection,
     )
-    selected_ptj = st.selectbox("PTJ", ["Semua"] + ptj_options, index=0)
+    selected_ptj = st.selectbox(
+        "PTJ",
+        ["Semua"] + ptj_options,
+        index=0,
+        key="ptj_filter",
+        on_change=clear_chart_selection,
+    )
 
 sap_missing = apply_category(sap_missing_all)
 easset_missing = apply_category(easset_missing_all)
@@ -260,7 +295,15 @@ else:
         showlegend=False,
         margin=dict(t=60, l=20, r=20, b=120),
     )
-    c1.plotly_chart(fig_sap, use_container_width=True)
+    with c1:
+        st.plotly_chart(
+            fig_sap,
+            width="stretch",
+            key="sap_bar_chart",
+            on_select=handle_sap_chart_selection,
+            selection_mode="points",
+            config={"displayModeBar": False},
+        )
 
 easset_chart = (
     easset_missing.assign(PTJ=easset_missing["PTJ eAsset"].fillna("Tidak Dikenal Pasti"))
@@ -287,9 +330,44 @@ else:
         showlegend=False,
         margin=dict(t=60, l=20, r=20, b=120),
     )
-    c2.plotly_chart(fig_easset, use_container_width=True)
+    with c2:
+        st.plotly_chart(
+            fig_easset,
+            width="stretch",
+            key="easset_bar_chart",
+            on_select=handle_easset_chart_selection,
+            selection_mode="points",
+            config={"displayModeBar": False},
+        )
+
+# Apabila bar PTJ diklik, semua laporan di bawah akan ikut PTJ tersebut.
+report_ptj = st.session_state.get("chart_selected_ptj")
+report_source = st.session_state.get("chart_selected_source")
+
+sap_report_data = sap_missing.copy()
+easset_report_data = easset_missing.copy()
+lokasi_report_data = lokasi.copy()
+
+if report_ptj:
+    sap_report_data = sap_report_data[
+        sap_report_data["PTJ SAP"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
+    ]
+    easset_report_data = easset_report_data[
+        easset_report_data["PTJ eAsset"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
+    ]
+    lokasi_report_data = lokasi_report_data[
+        lokasi_report_data["PTJ SAP"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
+        | lokasi_report_data["PTJ eAsset"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
+    ]
 
 st.markdown("### Laporan")
+if report_ptj:
+    info_col, reset_col = st.columns([5, 1])
+    info_col.info(f"Laporan ditapis mengikut bar {report_source}: {report_ptj}")
+    if reset_col.button("Papar Semua", use_container_width=True):
+        clear_chart_selection()
+        st.rerun()
+
 tab_sap, tab_easset, tab_lokasi = st.tabs(
     ["SAP", "eAsset", "Lokasi Berlainan"]
 )
@@ -304,7 +382,7 @@ sap_report_cols = [
     "Nilai Perolehan SAP",
     "Nilai Buku SAP",
 ]
-sap_report = sap_missing[[c for c in sap_report_cols if c in sap_missing.columns]].copy()
+sap_report = sap_report_data[[c for c in sap_report_cols if c in sap_report_data.columns]].copy()
 
 easset_report_cols = [
     "No Aset",
@@ -319,7 +397,7 @@ easset_report_cols = [
     "Eval Group eAsset",
     "PTJ eAsset",
 ]
-easset_report = easset_missing[[c for c in easset_report_cols if c in easset_missing.columns]].copy()
+easset_report = easset_report_data[[c for c in easset_report_cols if c in easset_report_data.columns]].copy()
 
 with tab_sap:
     st.dataframe(sap_report, use_container_width=True, hide_index=True, height=500)
@@ -340,10 +418,10 @@ with tab_easset:
     )
 
 with tab_lokasi:
-    st.dataframe(lokasi, use_container_width=True, hide_index=True, height=500)
+    st.dataframe(lokasi_report_data, use_container_width=True, hide_index=True, height=500)
     st.download_button(
         "Muat Turun Laporan Lokasi Berlainan",
-        data=excel_bytes({"Lokasi Berlainan": lokasi}),
+        data=excel_bytes({"Lokasi Berlainan": lokasi_report_data}),
         file_name="laporan_aset_lokasi_berlainan.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
@@ -354,7 +432,7 @@ st.download_button(
         {
             "SAP tiada di eAsset": sap_report,
             "eAsset tiada di SAP": easset_report,
-            "Lokasi Berlainan": lokasi,
+            "Lokasi Berlainan": lokasi_report_data,
         }
     ),
     file_name="laporan_perbandingan_aset.xlsx",
