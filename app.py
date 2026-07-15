@@ -47,11 +47,36 @@ st.markdown(
         transform: translateY(-2px);
         box-shadow: 0 12px 28px rgba(15, 118, 110, 0.16);
     }
+    .st-key-kpi_sap button,
+    .st-key-kpi_easset button,
+    .st-key-kpi_lokasi button {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 0.65rem !important;
+    }
+    .st-key-kpi_sap button::before,
+    .st-key-kpi_easset button::before,
+    .st-key-kpi_lokasi button::before {
+        display: block;
+        font-size: 1.15rem;
+        font-weight: 700;
+        line-height: 1.25;
+        color: #334155;
+        text-align: center;
+    }
+    .st-key-kpi_sap button::before { content: "Aset SAP tiada di eAsset"; }
+    .st-key-kpi_easset button::before { content: "Aset eAsset tiada di SAP"; }
+    .st-key-kpi_lokasi button::before { content: "Aset Berlainan Lokasi"; }
     .st-key-kpi_sap button p,
     .st-key-kpi_easset button p,
     .st-key-kpi_lokasi button p {
-        font-size: 1.35rem !important;
-        line-height: 1.6 !important;
+        margin: 0 !important;
+        font-size: 3rem !important;
+        font-weight: 900 !important;
+        line-height: 1 !important;
+        color: #0f172a !important;
     }
     .title-card {
         padding: 1.25rem 1.5rem;
@@ -311,7 +336,7 @@ with st.container(key="page_one"):
     m1, m2, m3 = st.columns(3)
     with m1:
         if st.button(
-            f"Aset SAP tiada di eAsset\n\n{sap_missing['No Aset'].nunique():,}",
+            f"{sap_missing['No Aset'].nunique():,}",
             key="kpi_sap",
             use_container_width=True,
         ):
@@ -319,7 +344,7 @@ with st.container(key="page_one"):
             st.rerun()
     with m2:
         if st.button(
-            f"Aset eAsset tiada di SAP\n\n{easset_missing['No Aset'].nunique():,}",
+            f"{easset_missing['No Aset'].nunique():,}",
             key="kpi_easset",
             use_container_width=True,
         ):
@@ -327,7 +352,7 @@ with st.container(key="page_one"):
             st.rerun()
     with m3:
         if st.button(
-            f"Aset Berlainan Lokasi\n\n{len(lokasi):,}",
+            f"{len(lokasi):,}",
             key="kpi_lokasi",
             use_container_width=True,
         ):
