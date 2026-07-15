@@ -16,12 +16,19 @@ st.markdown(
     """
     <style>
     .block-container {padding-top: 1.2rem; padding-bottom: 2rem;}
-    [data-testid="stMetric"] {
+    div[data-testid="stButton"] > button[kind="secondary"] {
+        width: 100%;
+        min-height: 105px;
         background: white;
         border: 1px solid #e5e7eb;
         border-radius: 14px;
-        padding: 14px 16px;
         box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+        font-size: 1.05rem;
+        font-weight: 700;
+        white-space: pre-line;
+    }
+    div[data-testid="stButton"] > button[kind="secondary"] p {
+        line-height: 1.45;
     }
     .title-card {
         padding: 1.25rem 1.5rem;
@@ -211,9 +218,18 @@ if "chart_selected_ptj" not in st.session_state:
     st.session_state["chart_selected_ptj"] = None
 if "chart_selected_source" not in st.session_state:
     st.session_state["chart_selected_source"] = None
+if "kpi_selected_report" not in st.session_state:
+    st.session_state["kpi_selected_report"] = None
 
 
 def clear_chart_selection():
+    st.session_state["chart_selected_ptj"] = None
+    st.session_state["chart_selected_source"] = None
+    st.session_state["kpi_selected_report"] = None
+
+
+def select_kpi_report(report_name: str):
+    st.session_state["kpi_selected_report"] = report_name
     st.session_state["chart_selected_ptj"] = None
     st.session_state["chart_selected_source"] = None
 
@@ -262,11 +278,32 @@ if selected_ptj != "Semua":
         lokasi["PTJ SAP"].eq(selected_ptj) | lokasi["PTJ eAsset"].eq(selected_ptj)
     ]
 
-# KPI
+# KPI boleh diklik untuk memaparkan laporan berkaitan.
 m1, m2, m3 = st.columns(3)
-m1.metric("Aset SAP tiada di eAsset", f"{sap_missing['No Aset'].nunique():,}")
-m2.metric("Aset eAsset tiada di SAP", f"{easset_missing['No Aset'].nunique():,}")
-m3.metric("Aset Berlainan Lokasi", f"{len(lokasi):,}")
+with m1:
+    if st.button(
+        f"Aset SAP tiada di eAsset\n\n{sap_missing['No Aset'].nunique():,}",
+        key="kpi_sap",
+        use_container_width=True,
+    ):
+        select_kpi_report("SAP")
+        st.rerun()
+with m2:
+    if st.button(
+        f"Aset eAsset tiada di SAP\n\n{easset_missing['No Aset'].nunique():,}",
+        key="kpi_easset",
+        use_container_width=True,
+    ):
+        select_kpi_report("eAsset")
+        st.rerun()
+with m3:
+    if st.button(
+        f"Aset Berlainan Lokasi\n\n{len(lokasi):,}",
+        key="kpi_lokasi",
+        use_container_width=True,
+    ):
+        select_kpi_report("Lokasi Berlainan")
+        st.rerun()
 
 c1, c2 = st.columns(2)
 
@@ -361,16 +398,17 @@ if report_ptj:
     ]
 
 st.markdown("### Laporan")
-if report_ptj:
+kpi_report = st.session_state.get("kpi_selected_report")
+
+if report_ptj or kpi_report:
     info_col, reset_col = st.columns([5, 1])
-    info_col.info(f"Laporan ditapis mengikut bar {report_source}: {report_ptj}")
+    if report_ptj:
+        info_col.info(f"Laporan ditapis mengikut bar {report_source}: {report_ptj}")
+    elif kpi_report:
+        info_col.info(f"Laporan dipilih melalui KPI: {kpi_report}")
     if reset_col.button("Papar Semua", use_container_width=True):
         clear_chart_selection()
         st.rerun()
-
-tab_sap, tab_easset, tab_lokasi = st.tabs(
-    ["SAP", "eAsset", "Lokasi Berlainan"]
-)
 
 sap_report_cols = [
     "No Aset",
@@ -399,7 +437,8 @@ easset_report_cols = [
 ]
 easset_report = easset_report_data[[c for c in easset_report_cols if c in easset_report_data.columns]].copy()
 
-with tab_sap:
+if kpi_report == "SAP":
+    st.subheader("SAP")
     st.dataframe(sap_report, use_container_width=True, hide_index=True, height=500)
     st.download_button(
         "Muat Turun Laporan SAP",
@@ -407,8 +446,8 @@ with tab_sap:
         file_name="laporan_aset_sap_tiada_di_easset.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-
-with tab_easset:
+elif kpi_report == "eAsset":
+    st.subheader("eAsset")
     st.dataframe(easset_report, use_container_width=True, hide_index=True, height=500)
     st.download_button(
         "Muat Turun Laporan eAsset",
@@ -416,8 +455,8 @@ with tab_easset:
         file_name="laporan_aset_easset_tiada_di_sap.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-
-with tab_lokasi:
+elif kpi_report == "Lokasi Berlainan":
+    st.subheader("Lokasi Berlainan")
     st.dataframe(lokasi_report_data, use_container_width=True, hide_index=True, height=500)
     st.download_button(
         "Muat Turun Laporan Lokasi Berlainan",
@@ -425,6 +464,35 @@ with tab_lokasi:
         file_name="laporan_aset_lokasi_berlainan.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+else:
+    tab_sap, tab_easset, tab_lokasi = st.tabs(["SAP", "eAsset", "Lokasi Berlainan"])
+
+    with tab_sap:
+        st.dataframe(sap_report, use_container_width=True, hide_index=True, height=500)
+        st.download_button(
+            "Muat Turun Laporan SAP",
+            data=excel_bytes({"SAP tiada di eAsset": sap_report}),
+            file_name="laporan_aset_sap_tiada_di_easset.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    with tab_easset:
+        st.dataframe(easset_report, use_container_width=True, hide_index=True, height=500)
+        st.download_button(
+            "Muat Turun Laporan eAsset",
+            data=excel_bytes({"eAsset tiada di SAP": easset_report}),
+            file_name="laporan_aset_easset_tiada_di_sap.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    with tab_lokasi:
+        st.dataframe(lokasi_report_data, use_container_width=True, hide_index=True, height=500)
+        st.download_button(
+            "Muat Turun Laporan Lokasi Berlainan",
+            data=excel_bytes({"Lokasi Berlainan": lokasi_report_data}),
+            file_name="laporan_aset_lokasi_berlainan.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 st.download_button(
     "Muat Turun Semua Laporan",
