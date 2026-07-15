@@ -305,27 +305,20 @@ m4.metric("Aset Salah Klasifikasi", f"{classification_mismatch:,}")
 
 st.markdown("---")
 
-# Data bagi carta: hanya aset yang tidak wujud dalam sistem satu lagi.
-sap_only_assets = sap_filtered_assets - easset_assets
-easset_only_assets = easset_filtered_assets - sap_assets
-
-sap_only_df = sap_filtered[sap_filtered["No Aset SAP"].isin(sap_only_assets)].copy()
-easset_only_df = easset_filtered[easset_filtered["No Aset SAP"].isin(easset_only_assets)].copy()
-
 chart_col1, chart_col2 = st.columns(2, gap="large")
 
 with chart_col1:
     sap_chart = (
-        sap_only_df.assign(PTJ=lambda d: d["PTJ SAP"].fillna("Tidak Dikenal Pasti"))
+        sap_filtered.assign(PTJ=lambda d: d["PTJ SAP"].fillna("Tidak Dikenal Pasti"))
         .groupby("PTJ", as_index=False)["No Aset SAP"]
         .nunique()
         .rename(columns={"No Aset SAP": "Jumlah Aset"})
         .sort_values("Jumlah Aset", ascending=True)
     )
-    st.subheader("📊 Aset di SAP tetapi Tiada di eAsset Mengikut PTJ")
-    st.metric("Jumlah", f"{len(sap_only_assets):,}")
+    st.subheader("📊 Aset SAP Mengikut PTJ")
+    st.metric("Jumlah Aset SAP", f"{sap_filtered['No Aset SAP'].nunique():,}")
     if sap_chart.empty:
-        st.info("Tiada aset SAP yang tiada dalam eAsset bagi penapis yang dipilih.")
+        st.info("Tiada rekod SAP bagi penapis yang dipilih.")
     else:
         fig_sap = px.bar(
             sap_chart,
@@ -346,16 +339,16 @@ with chart_col1:
 
 with chart_col2:
     easset_chart = (
-        easset_only_df.assign(PTJ=lambda d: d["PTJ eAsset"].fillna("Tidak Dikenal Pasti"))
+        easset_filtered.assign(PTJ=lambda d: d["PTJ eAsset"].fillna("Tidak Dikenal Pasti"))
         .groupby("PTJ", as_index=False)["No Aset SAP"]
         .nunique()
         .rename(columns={"No Aset SAP": "Jumlah Aset"})
         .sort_values("Jumlah Aset", ascending=True)
     )
-    st.subheader("📊 Aset di eAsset tetapi Tiada di SAP Mengikut PTJ")
-    st.metric("Jumlah", f"{len(easset_only_assets):,}")
+    st.subheader("📊 Aset eAsset Mengikut PTJ")
+    st.metric("Jumlah Aset eAsset", f"{easset_filtered['No Aset SAP'].nunique():,}")
     if easset_chart.empty:
-        st.info("Tiada aset eAsset yang tiada dalam SAP bagi penapis yang dipilih.")
+        st.info("Tiada rekod eAsset bagi penapis yang dipilih.")
     else:
         fig_easset = px.bar(
             easset_chart,
