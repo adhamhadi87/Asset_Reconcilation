@@ -1,7 +1,6 @@
 import io
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -34,9 +33,6 @@ st.markdown(
     }
     .title-card h1 {margin: 0; font-size: 2rem;}
     .title-card p {margin: .35rem 0 0 0; opacity: .9;}
-    .status-ok {color:#047857;font-weight:700;}
-    .status-warn {color:#b45309;font-weight:700;}
-    .status-bad {color:#b91c1c;font-weight:700;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -45,25 +41,29 @@ st.markdown(
 DEFAULT_FILE = Path(__file__).with_name("Asset.xlsx")
 
 
-def clean_asset_no(series: pd.Series) -> pd.Series:
+def clean_text(series: pd.Series) -> pd.Series:
     return (
         series.astype("string")
         .str.strip()
-        .str.replace(r"\.0$", "", regex=True)
-        .replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
+        .replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "<NA>": pd.NA})
     )
 
 
-def to_number(series: pd.Series) -> pd.Series:
-    return pd.to_numeric(
-        series.astype("string").str.replace(",", "", regex=False).str.strip(),
-        errors="coerce",
-    ).fillna(0.0)
+def clean_asset_no(series: pd.Series) -> pd.Series:
+    return clean_text(series).str.replace(r"\.0$", "", regex=True)
+
+
+def excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for sheet_name, df in sheets.items():
+            df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+    return output.getvalue()
 
 
 @st.cache_data(show_spinner=False)
-def load_data(file_bytes: bytes):
-    xls = pd.ExcelFile(io.BytesIO(file_bytes))
+def load_data(path: str):
+    xls = pd.ExcelFile(path)
     required = {"SAP", "EAsset", "DIM Eva grp 1"}
     missing = required.difference(xls.sheet_names)
     if missing:
@@ -75,331 +75,288 @@ def load_data(file_bytes: bytes):
 
     sap = sap.rename(
         columns={
-            "Eval. Grp 1-Block": "Eval Group",
-            "Asset": "No Aset SAP",
+            "Eval. Grp 1-Block": "Eval Group SAP",
+            "Asset": "No Aset",
             "Sub-number": "Sub No",
             "Asset Description": "Deskripsi Ringkas",
-            "Asset Description.1": "Deskripsi Aset",
+            "Asset Description.1": "Nama Aset",
             "Acquis.val.": "Nilai Perolehan SAP",
             "Book val.": "Nilai Buku SAP",
         }
     )
     easset = easset.rename(
         columns={
-            "No. Aset SAP": "No Aset SAP",
-            "No. Siri Pendaftaran": "No Siri Pendaftaran",
+            "No. Aset SAP": "No Aset",
+            "Eval Group 1": "Eval Group eAsset",
             "Harga (RM)": "Nilai eAsset",
-            "Eval Group 1": "Eval Group",
         }
     )
     dim = dim.rename(columns={"Eval. Grp 1-Block": "Eval Group"})
 
-    sap["No Aset SAP"] = clean_asset_no(sap["No Aset SAP"])
-    easset["No Aset SAP"] = clean_asset_no(easset["No Aset SAP"])
-    sap = sap[sap["No Aset SAP"].notna()].copy()
-    easset = easset[easset["No Aset SAP"].notna()].copy()
+    sap["No Aset"] = clean_asset_no(sap["No Aset"])
+    easset["No Aset"] = clean_asset_no(easset["No Aset"])
+    sap["Eval Group SAP"] = clean_text(sap["Eval Group SAP"])
+    easset["Eval Group eAsset"] = clean_text(easset["Eval Group eAsset"])
+    dim["Eval Group"] = clean_text(dim["Eval Group"])
+    dim["Detail 3"] = clean_text(dim["Detail 3"])
 
-    sap["Nilai Perolehan SAP"] = to_number(sap["Nilai Perolehan SAP"])
-    sap["Nilai Buku SAP"] = to_number(sap["Nilai Buku SAP"])
-    easset["Nilai eAsset"] = to_number(easset["Nilai eAsset"])
-    easset["Tarikh Beli"] = pd.to_datetime(easset.get("Tarikh Beli"), errors="coerce")
-    easset["Tarikh Invois"] = pd.to_datetime(easset.get("Tarikh Invois"), errors="coerce")
+    sap = sap[sap["No Aset"].notna()].copy()
+    easset = easset[easset["No Aset"].notna()].copy()
 
-    # Nilai perolehan SAP bagi baris subtotal tanpa nombor aset telah dibuang.
-    # Data diagregat mengikut nombor aset supaya sub-number/duplicate dapat dibandingkan secara adil.
-    sap_agg = (
-        sap.groupby("No Aset SAP", as_index=False)
-        .agg(
-            {
-                "Eval Group": "first",
-                "Deskripsi Ringkas": lambda x: " | ".join(x.dropna().astype(str).unique()[:3]),
-                "Deskripsi Aset": lambda x: " | ".join(x.dropna().astype(str).unique()[:3]),
-                "Nilai Perolehan SAP": "sum",
-                "Nilai Buku SAP": "sum",
-                "Sub No": "count",
-            }
-        )
-        .rename(columns={"Sub No": "Bil Rekod SAP"})
+    dim_map = (
+        dim[["Eval Group", "Detail 3"]]
+        .dropna(subset=["Eval Group"])
+        .drop_duplicates("Eval Group")
     )
 
-    easset_agg = (
-        easset.groupby("No Aset SAP", as_index=False)
-        .agg(
-            {
-                "No Siri Pendaftaran": lambda x: " | ".join(x.dropna().astype(str).unique()[:5]),
-                "Jenis": lambda x: " | ".join(x.dropna().astype(str).unique()[:3]),
-                "Jenama": lambda x: " | ".join(x.dropna().astype(str).unique()[:3]),
-                "Lokasi": lambda x: " | ".join(x.dropna().astype(str).unique()[:3]),
-                "Pegawai Penempatan": lambda x: " | ".join(x.dropna().astype(str).unique()[:3]),
-                "No. Pesanan": lambda x: " | ".join(x.dropna().astype(str).unique()[:3]),
-                "Tarikh Beli": "min",
-                "Tarikh Invois": "min",
-                "Nilai eAsset": "sum",
-                "Eval Group": "first",
-                "Bil.": "count",
-            }
-        )
-        .rename(columns={"Bil.": "Bil Rekod eAsset", "Eval Group": "Eval Group eAsset"})
+    sap = sap.merge(
+        dim_map.rename(columns={"Eval Group": "Eval Group SAP", "Detail 3": "PTJ SAP"}),
+        on="Eval Group SAP",
+        how="left",
+    )
+    easset = easset.merge(
+        dim_map.rename(columns={"Eval Group": "Eval Group eAsset", "Detail 3": "PTJ eAsset"}),
+        on="Eval Group eAsset",
+        how="left",
     )
 
-    compare = sap_agg.merge(easset_agg, on="No Aset SAP", how="outer", indicator=True)
-    compare["Sumber Rekod"] = compare["_merge"].map(
-        {"both": "SAP & eAsset", "left_only": "SAP Sahaja", "right_only": "eAsset Sahaja"}
+    sap["PTJ SAP"] = clean_text(sap["PTJ SAP"])
+    easset["PTJ eAsset"] = clean_text(easset["PTJ eAsset"])
+
+    # Senarai unik digunakan untuk aset yang hanya wujud dalam satu sistem.
+    sap_unique = sap.drop_duplicates("No Aset").copy()
+    easset_unique = easset.drop_duplicates("No Aset").copy()
+
+    sap_numbers = set(sap_unique["No Aset"].dropna())
+    easset_numbers = set(easset_unique["No Aset"].dropna())
+
+    sap_missing = sap_unique[~sap_unique["No Aset"].isin(easset_numbers)].copy()
+    easset_missing = easset_unique[~easset_unique["No Aset"].isin(sap_numbers)].copy()
+
+    # Perbandingan lokasi dibuat mengikut setiap baris yang mempunyai No. Aset sama.
+    # Kaedah ini mengekalkan 60 rekod working apabila terdapat duplicate/sub-record.
+    lokasi = sap.merge(easset, on="No Aset", how="inner", suffixes=("", "_eAsset"))
+    lokasi = lokasi[
+        lokasi["Eval Group SAP"].notna()
+        & lokasi["Eval Group eAsset"].notna()
+        & lokasi["Eval Group SAP"].ne(lokasi["Eval Group eAsset"])
+    ].copy()
+
+    # Nama aset diletakkan betul-betul di sebelah No. Aset.
+    lokasi["Nama Aset"] = clean_text(lokasi.get("Nama Aset", pd.Series(index=lokasi.index, dtype="string")))
+    lokasi["Nama Aset"] = lokasi["Nama Aset"].fillna(
+        clean_text(lokasi.get("Deskripsi Ringkas", pd.Series(index=lokasi.index, dtype="string")))
     )
-    compare.drop(columns="_merge", inplace=True)
 
-    compare["Eval Group"] = compare["Eval Group"].fillna(compare["Eval Group eAsset"])
-    compare["Perbezaan Nilai"] = compare["Nilai Perolehan SAP"].fillna(0) - compare["Nilai eAsset"].fillna(0)
-    compare["Perbezaan Mutlak"] = compare["Perbezaan Nilai"].abs()
+    lokasi_cols = [
+        "No Aset",
+        "Nama Aset",
+        "Eval Group SAP",
+        "PTJ SAP",
+        "Eval Group eAsset",
+        "PTJ eAsset",
+        "No. Siri Pendaftaran",
+        "Jenis",
+        "Jenama",
+        "Lokasi",
+        "Pegawai Penempatan",
+    ]
+    lokasi = lokasi[[c for c in lokasi_cols if c in lokasi.columns]].copy()
 
-    tolerance = 1.00
-    compare["Status Padanan"] = np.select(
-        [
-            compare["Sumber Rekod"].eq("SAP Sahaja"),
-            compare["Sumber Rekod"].eq("eAsset Sahaja"),
-            compare["Perbezaan Mutlak"].le(tolerance),
-        ],
-        ["Tiada dalam eAsset", "Tiada dalam SAP", "Padan"],
-        default="Nilai Tidak Padan",
-    )
-
-    dim_cols = [c for c in ["Eval Group", "Detail", "Detail 2", "Detail 3"] if c in dim.columns]
-    compare = compare.merge(dim[dim_cols].drop_duplicates("Eval Group"), on="Eval Group", how="left")
-
-    # Tahun aset untuk analisis umur rekod eAsset.
-    compare["Tahun Beli"] = compare["Tarikh Beli"].dt.year.astype("Int64")
-    return sap, easset, dim, compare
-
-
-def fmt_rm(value):
-    return f"RM {value:,.2f}"
-
-
-def csv_bytes(df):
-    return df.to_csv(index=False).encode("utf-8-sig")
+    return sap, easset, sap_missing, easset_missing, lokasi
 
 
 st.markdown(
     """
     <div class="title-card">
         <h1>🏢 Dashboard Aset SAP vs eAsset</h1>
-        <p>Semakan padanan nombor aset, nilai perolehan, nilai buku dan maklumat penempatan.</p>
+        <p>Perbandingan aset berdasarkan No. Aset dan Eval Group.</p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-with st.sidebar:
-    st.header("⚙️ Sumber Data")
-    upload = st.file_uploader("Muat naik fail Excel terkini", type=["xlsx"])
-    if upload is not None:
-        file_bytes = upload.getvalue()
-        st.success(f"Menggunakan: {upload.name}")
-    elif DEFAULT_FILE.exists():
-        file_bytes = DEFAULT_FILE.read_bytes()
-        st.info("Menggunakan fail Asset.xlsx dalam aplikasi")
-    else:
-        st.warning("Sila muat naik fail Excel.")
-        st.stop()
+if not DEFAULT_FILE.exists():
+    st.error("Fail Asset.xlsx tidak ditemui dalam folder aplikasi.")
+    st.stop()
 
 try:
-    sap, easset, dim, compare = load_data(file_bytes)
+    sap, easset, sap_missing_all, easset_missing_all, lokasi_all = load_data(str(DEFAULT_FILE))
 except Exception as exc:
     st.error(f"Fail tidak dapat dibaca: {exc}")
     st.stop()
 
+
+def apply_category(df: pd.DataFrame, asset_col: str = "No Aset") -> pd.DataFrame:
+    result = df.copy()
+    result["_No Aset Numerik"] = pd.to_numeric(result[asset_col], errors="coerce")
+    result = result[result["_No Aset Numerik"].between(100000000, 999999999, inclusive="both")]
+    if selected_category == "Aset Alih":
+        result = result[result["_No Aset Numerik"].between(100000000, 699999999, inclusive="both")]
+    elif selected_category == "Aset Tak Ketara":
+        result = result[result["_No Aset Numerik"].between(700000000, 999999999, inclusive="both")]
+    return result.drop(columns="_No Aset Numerik")
+
+
+ptj_values = pd.concat(
+    [
+        sap.get("PTJ SAP", pd.Series(dtype="string")),
+        easset.get("PTJ eAsset", pd.Series(dtype="string")),
+    ],
+    ignore_index=True,
+)
+ptj_options = sorted(clean_text(ptj_values).dropna().unique().tolist())
+
 with st.sidebar:
-    st.divider()
     st.header("🔎 Penapis")
-    source_options = sorted(compare["Sumber Rekod"].dropna().unique())
-    status_options = sorted(compare["Status Padanan"].dropna().unique())
-    group_options = sorted(compare["Eval Group"].dropna().astype(str).unique())
-    office_options = sorted(compare.get("Detail 3", pd.Series(dtype=str)).dropna().astype(str).unique())
-
-    selected_source = st.multiselect("Sumber Rekod", source_options, default=source_options)
-    selected_status = st.multiselect("Status Padanan", status_options, default=status_options)
-    selected_group = st.multiselect("Eval Group", group_options)
-    selected_office = st.multiselect("Kategori Pejabat", office_options)
-    search = st.text_input("Cari nombor / deskripsi aset")
-    min_diff = st.number_input("Perbezaan minimum (RM)", min_value=0.0, value=0.0, step=100.0)
-
-filtered = compare[
-    compare["Sumber Rekod"].isin(selected_source)
-    & compare["Status Padanan"].isin(selected_status)
-    & compare["Perbezaan Mutlak"].ge(min_diff)
-].copy()
-if selected_group:
-    filtered = filtered[filtered["Eval Group"].astype(str).isin(selected_group)]
-if selected_office and "Detail 3" in filtered.columns:
-    filtered = filtered[filtered["Detail 3"].astype(str).isin(selected_office)]
-if search:
-    q = search.lower().strip()
-    searchable = filtered[[c for c in ["No Aset SAP", "Deskripsi Aset", "Jenama", "Lokasi", "No Siri Pendaftaran"] if c in filtered.columns]].fillna("").astype(str)
-    mask = searchable.apply(lambda col: col.str.lower().str.contains(q, regex=False)).any(axis=1)
-    filtered = filtered[mask]
-
-matched = (compare["Sumber Rekod"] == "SAP & eAsset").sum()
-sap_only = (compare["Sumber Rekod"] == "SAP Sahaja").sum()
-ea_only = (compare["Sumber Rekod"] == "eAsset Sahaja").sum()
-value_mismatch = (compare["Status Padanan"] == "Nilai Tidak Padan").sum()
-match_rate = matched / max(compare["No Aset SAP"].nunique(), 1) * 100
-
-m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Aset Unik", f"{compare['No Aset SAP'].nunique():,}")
-m2.metric("Padan SAP & eAsset", f"{matched:,}", f"{match_rate:.1f}%")
-m3.metric("SAP Sahaja", f"{sap_only:,}")
-m4.metric("eAsset Sahaja", f"{ea_only:,}")
-m5.metric("Nilai Tidak Padan", f"{value_mismatch:,}")
-
-st.caption(
-    f"Jumlah nilai perolehan SAP: **{fmt_rm(compare['Nilai Perolehan SAP'].sum())}**  ·  "
-    f"Jumlah nilai eAsset: **{fmt_rm(compare['Nilai eAsset'].sum())}**  ·  "
-    f"Jumlah nilai buku SAP: **{fmt_rm(compare['Nilai Buku SAP'].sum())}**"
-)
-
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["📊 Ringkasan", "🔁 Perbandingan", "⚠️ Isu & Pengecualian", "📁 Data Asal"]
-)
-
-with tab1:
-    c1, c2 = st.columns(2)
-    status_summary = (
-        compare.groupby("Status Padanan", as_index=False)["No Aset SAP"]
-        .nunique()
-        .rename(columns={"No Aset SAP": "Bilangan"})
+    selected_category = st.selectbox(
+        "Kategori",
+        ["Semua", "Aset Alih", "Aset Tak Ketara"],
+        index=0,
     )
-    fig_status = px.bar(
-        status_summary,
-        x="Status Padanan",
-        y="Bilangan",
-        text_auto=",",
-        title="Status Padanan Aset",
-    )
-    fig_status.update_layout(xaxis_title=None, yaxis_title="Bilangan Aset", showlegend=False)
-    c1.plotly_chart(fig_status, use_container_width=True)
+    selected_ptj = st.selectbox("PTJ", ["Semua"] + ptj_options, index=0)
 
-    source_summary = (
-        compare.groupby("Sumber Rekod", as_index=False)["No Aset SAP"]
-        .nunique()
-        .rename(columns={"No Aset SAP": "Bilangan"})
-    )
-    fig_source = px.pie(
-        source_summary,
-        names="Sumber Rekod",
-        values="Bilangan",
-        hole=0.55,
-        title="Liputan Rekod Mengikut Sistem",
-    )
-    c2.plotly_chart(fig_source, use_container_width=True)
+sap_missing = apply_category(sap_missing_all)
+easset_missing = apply_category(easset_missing_all)
+lokasi = apply_category(lokasi_all)
 
-    c3, c4 = st.columns(2)
-    by_group = (
-        compare.groupby(["Eval Group", "Status Padanan"], dropna=False, as_index=False)["No Aset SAP"]
-        .nunique()
-        .rename(columns={"No Aset SAP": "Bilangan"})
-    )
-    top_groups = (
-        compare.groupby("Eval Group")["No Aset SAP"].nunique().nlargest(15).index
-    )
-    by_group = by_group[by_group["Eval Group"].isin(top_groups)]
-    fig_group = px.bar(
-        by_group,
-        x="Eval Group",
-        y="Bilangan",
-        color="Status Padanan",
-        title="15 Eval Group Terbesar",
-    )
-    c3.plotly_chart(fig_group, use_container_width=True)
-
-    year_summary = (
-        compare.dropna(subset=["Tahun Beli"])
-        .groupby("Tahun Beli", as_index=False)["No Aset SAP"]
-        .nunique()
-        .rename(columns={"No Aset SAP": "Bilangan"})
-    )
-    fig_year = px.line(
-        year_summary,
-        x="Tahun Beli",
-        y="Bilangan",
-        markers=True,
-        title="Bilangan Aset Mengikut Tahun Beli (eAsset)",
-    )
-    c4.plotly_chart(fig_year, use_container_width=True)
-
-with tab2:
-    st.subheader("Senarai Perbandingan Aset")
-    display_cols = [
-        "No Aset SAP", "Status Padanan", "Sumber Rekod", "Eval Group", "Detail", "Detail 3",
-        "Deskripsi Aset", "No Siri Pendaftaran", "Jenama", "Lokasi", "Pegawai Penempatan",
-        "Nilai Perolehan SAP", "Nilai eAsset", "Perbezaan Nilai", "Nilai Buku SAP",
-        "Bil Rekod SAP", "Bil Rekod eAsset", "Tarikh Beli"
+if selected_ptj != "Semua":
+    sap_missing = sap_missing[sap_missing["PTJ SAP"].eq(selected_ptj)]
+    easset_missing = easset_missing[easset_missing["PTJ eAsset"].eq(selected_ptj)]
+    lokasi = lokasi[
+        lokasi["PTJ SAP"].eq(selected_ptj) | lokasi["PTJ eAsset"].eq(selected_ptj)
     ]
-    display_cols = [c for c in display_cols if c in filtered.columns]
-    st.dataframe(
-        filtered[display_cols].sort_values("Perbezaan Mutlak", ascending=False),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Nilai Perolehan SAP": st.column_config.NumberColumn(format="RM %.2f"),
-            "Nilai eAsset": st.column_config.NumberColumn(format="RM %.2f"),
-            "Perbezaan Nilai": st.column_config.NumberColumn(format="RM %.2f"),
-            "Nilai Buku SAP": st.column_config.NumberColumn(format="RM %.2f"),
-            "Tarikh Beli": st.column_config.DateColumn(format="DD/MM/YYYY"),
-        },
-        height=650,
+
+# KPI
+m1, m2, m3 = st.columns(3)
+m1.metric("Aset SAP tiada di eAsset", f"{sap_missing['No Aset'].nunique():,}")
+m2.metric("Aset eAsset tiada di SAP", f"{easset_missing['No Aset'].nunique():,}")
+m3.metric("Aset Berlainan Lokasi", f"{len(lokasi):,}")
+
+c1, c2 = st.columns(2)
+
+sap_chart = (
+    sap_missing.assign(PTJ=sap_missing["PTJ SAP"].fillna("Tidak Dikenal Pasti"))
+    .groupby("PTJ", as_index=False)["No Aset"]
+    .nunique()
+    .rename(columns={"No Aset": "Bilangan"})
+    .sort_values("Bilangan", ascending=False)
+)
+
+if sap_chart.empty:
+    c1.info("Tiada rekod Aset SAP tiada di eAsset untuk penapis dipilih.")
+else:
+    fig_sap = px.bar(
+        sap_chart,
+        x="PTJ",
+        y="Bilangan",
+        text="Bilangan",
+        title="Aset SAP",
     )
+    fig_sap.update_traces(textposition="outside", cliponaxis=False)
+    fig_sap.update_layout(
+        xaxis_title=None,
+        yaxis_title=None,
+        showlegend=False,
+        margin=dict(t=60, l=20, r=20, b=120),
+    )
+    c1.plotly_chart(fig_sap, use_container_width=True)
+
+easset_chart = (
+    easset_missing.assign(PTJ=easset_missing["PTJ eAsset"].fillna("Tidak Dikenal Pasti"))
+    .groupby("PTJ", as_index=False)["No Aset"]
+    .nunique()
+    .rename(columns={"No Aset": "Bilangan"})
+    .sort_values("Bilangan", ascending=False)
+)
+
+if easset_chart.empty:
+    c2.info("Tiada rekod Aset eAsset tiada di SAP untuk penapis dipilih.")
+else:
+    fig_easset = px.bar(
+        easset_chart,
+        x="PTJ",
+        y="Bilangan",
+        text="Bilangan",
+        title="Aset eAsset",
+    )
+    fig_easset.update_traces(textposition="outside", cliponaxis=False)
+    fig_easset.update_layout(
+        xaxis_title=None,
+        yaxis_title=None,
+        showlegend=False,
+        margin=dict(t=60, l=20, r=20, b=120),
+    )
+    c2.plotly_chart(fig_easset, use_container_width=True)
+
+st.markdown("### Laporan")
+tab_sap, tab_easset, tab_lokasi = st.tabs(
+    ["SAP", "eAsset", "Lokasi Berlainan"]
+)
+
+sap_report_cols = [
+    "No Aset",
+    "Nama Aset",
+    "Deskripsi Ringkas",
+    "Eval Group SAP",
+    "PTJ SAP",
+    "Sub No",
+    "Nilai Perolehan SAP",
+    "Nilai Buku SAP",
+]
+sap_report = sap_missing[[c for c in sap_report_cols if c in sap_missing.columns]].copy()
+
+easset_report_cols = [
+    "No Aset",
+    "No. Siri Pendaftaran",
+    "Jenis",
+    "Jenama",
+    "Lokasi",
+    "Pegawai Penempatan",
+    "No. Pesanan",
+    "Tarikh Beli",
+    "Nilai eAsset",
+    "Eval Group eAsset",
+    "PTJ eAsset",
+]
+easset_report = easset_missing[[c for c in easset_report_cols if c in easset_missing.columns]].copy()
+
+with tab_sap:
+    st.dataframe(sap_report, use_container_width=True, hide_index=True, height=500)
     st.download_button(
-        "⬇️ Muat Turun Keputusan Ditapis (CSV)",
-        data=csv_bytes(filtered[display_cols]),
-        file_name="perbandingan_aset_sap_vs_easset.csv",
-        mime="text/csv",
+        "Muat Turun Laporan SAP",
+        data=excel_bytes({"SAP tiada di eAsset": sap_report}),
+        file_name="laporan_aset_sap_tiada_di_easset.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-with tab3:
-    issue = compare[compare["Status Padanan"] != "Padan"].copy()
-    i1, i2, i3 = st.columns(3)
-    i1.metric("Jumlah Pengecualian", f"{len(issue):,}")
-    i2.metric("Jumlah Perbezaan Mutlak", fmt_rm(issue["Perbezaan Mutlak"].sum()))
-    dup_ea = (easset.groupby("No Aset SAP").size() > 1).sum()
-    i3.metric("No. Aset Duplicate eAsset", f"{dup_ea:,}")
-
-    issue_type = (
-        issue.groupby("Status Padanan", as_index=False)
-        .agg(Bilangan=("No Aset SAP", "nunique"), Perbezaan_RM=("Perbezaan Mutlak", "sum"))
-    )
-    st.dataframe(
-        issue_type,
-        use_container_width=True,
-        hide_index=True,
-        column_config={"Perbezaan_RM": st.column_config.NumberColumn("Perbezaan (RM)", format="RM %.2f")},
+with tab_easset:
+    st.dataframe(easset_report, use_container_width=True, hide_index=True, height=500)
+    st.download_button(
+        "Muat Turun Laporan eAsset",
+        data=excel_bytes({"eAsset tiada di SAP": easset_report}),
+        file_name="laporan_aset_easset_tiada_di_sap.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    st.subheader("Top 50 Perbezaan Nilai Tertinggi")
-    top_diff = issue.nlargest(50, "Perbezaan Mutlak")
-    st.dataframe(
-        top_diff[[c for c in ["No Aset SAP", "Status Padanan", "Deskripsi Aset", "Jenama", "Lokasi", "Nilai Perolehan SAP", "Nilai eAsset", "Perbezaan Nilai"] if c in top_diff.columns]],
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Nilai Perolehan SAP": st.column_config.NumberColumn(format="RM %.2f"),
-            "Nilai eAsset": st.column_config.NumberColumn(format="RM %.2f"),
-            "Perbezaan Nilai": st.column_config.NumberColumn(format="RM %.2f"),
-        },
+with tab_lokasi:
+    st.dataframe(lokasi, use_container_width=True, hide_index=True, height=500)
+    st.download_button(
+        "Muat Turun Laporan Lokasi Berlainan",
+        data=excel_bytes({"Lokasi Berlainan": lokasi}),
+        file_name="laporan_aset_lokasi_berlainan.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    st.subheader("Rekod Duplicate dalam eAsset")
-    duplicate_numbers = easset.groupby("No Aset SAP").size().loc[lambda s: s > 1].index
-    duplicate_rows = easset[easset["No Aset SAP"].isin(duplicate_numbers)].sort_values("No Aset SAP")
-    st.dataframe(duplicate_rows, use_container_width=True, hide_index=True, height=420)
-
-with tab4:
-    raw1, raw2, raw3 = st.tabs(["SAP", "eAsset", "Dimensi Eval Group"])
-    with raw1:
-        st.dataframe(sap, use_container_width=True, hide_index=True, height=600)
-    with raw2:
-        st.dataframe(easset, use_container_width=True, hide_index=True, height=600)
-    with raw3:
-        st.dataframe(dim, use_container_width=True, hide_index=True, height=600)
-
-st.divider()
-st.caption("Dashboard ini mengagregat rekod berdasarkan No. Aset SAP. Toleransi padanan nilai ditetapkan pada RM1.00.")
+st.download_button(
+    "Muat Turun Semua Laporan",
+    data=excel_bytes(
+        {
+            "SAP tiada di eAsset": sap_report,
+            "eAsset tiada di SAP": easset_report,
+            "Lokasi Berlainan": lokasi,
+        }
+    ),
+    file_name="laporan_perbandingan_aset.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
