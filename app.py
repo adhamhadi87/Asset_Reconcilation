@@ -15,20 +15,43 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    html {scroll-behavior: smooth;}
     .block-container {padding-top: 1.2rem; padding-bottom: 2rem;}
-    div[data-testid="stButton"] > button[kind="secondary"] {
-        width: 100%;
-        min-height: 105px;
-        background: white;
-        border: 1px solid #e5e7eb;
-        border-radius: 14px;
-        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
-        font-size: 1.05rem;
-        font-weight: 700;
-        white-space: pre-line;
+    section.main {
+        scroll-snap-type: y mandatory;
+        scroll-behavior: smooth;
     }
-    div[data-testid="stButton"] > button[kind="secondary"] p {
-        line-height: 1.45;
+    .st-key-page_one, .st-key-page_two {
+        min-height: calc(100vh - 2rem);
+        scroll-snap-align: start;
+        scroll-snap-stop: always;
+    }
+    .st-key-kpi_sap button,
+    .st-key-kpi_easset button,
+    .st-key-kpi_lokasi button {
+        width: 100%;
+        min-height: 145px;
+        background: white;
+        border: 1px solid #dbe4ea;
+        border-radius: 18px;
+        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+        font-size: 1.35rem !important;
+        font-weight: 800 !important;
+        white-space: pre-line;
+        line-height: 1.6 !important;
+    }
+    .st-key-kpi_sap button:hover,
+    .st-key-kpi_easset button:hover,
+    .st-key-kpi_lokasi button:hover {
+        border-color: #0f766e;
+        transform: translateY(-2px);
+        box-shadow: 0 12px 28px rgba(15, 118, 110, 0.16);
+    }
+    .st-key-kpi_sap button p,
+    .st-key-kpi_easset button p,
+    .st-key-kpi_lokasi button p {
+        font-size: 1.35rem !important;
+        line-height: 1.6 !important;
     }
     .title-card {
         padding: 1.25rem 1.5rem;
@@ -197,11 +220,15 @@ except Exception as exc:
 def apply_category(df: pd.DataFrame, asset_col: str = "No Aset") -> pd.DataFrame:
     result = df.copy()
     result["_No Aset Numerik"] = pd.to_numeric(result[asset_col], errors="coerce")
-    result = result[result["_No Aset Numerik"].between(100000000, 999999999, inclusive="both")]
-    if selected_category == "Aset Alih":
-        result = result[result["_No Aset Numerik"].between(100000000, 699999999, inclusive="both")]
+    result = result[result["_No Aset Numerik"] >= 100000000]
+
+    if selected_category == "Aset Tak Alih":
+        result = result[result["_No Aset Numerik"].between(100000000, 299999999, inclusive="both")]
+    elif selected_category == "Aset Alih":
+        result = result[result["_No Aset Numerik"].between(300000000, 799999999, inclusive="both")]
     elif selected_category == "Aset Tak Ketara":
-        result = result[result["_No Aset Numerik"].between(700000000, 999999999, inclusive="both")]
+        result = result[result["_No Aset Numerik"] >= 800000000]
+
     return result.drop(columns="_No Aset Numerik")
 
 
@@ -254,7 +281,7 @@ with st.sidebar:
     st.header("🔎 Penapis")
     selected_category = st.selectbox(
         "Kategori",
-        ["Semua", "Aset Alih", "Aset Tak Ketara"],
+        ["Semua", "Aset Tak Alih", "Aset Alih", "Aset Tak Ketara"],
         index=0,
         key="category_filter",
         on_change=clear_chart_selection,
@@ -278,196 +305,172 @@ if selected_ptj != "Semua":
         lokasi["PTJ SAP"].eq(selected_ptj) | lokasi["PTJ eAsset"].eq(selected_ptj)
     ]
 
-# KPI boleh diklik untuk memaparkan laporan berkaitan.
-m1, m2, m3 = st.columns(3)
-with m1:
-    if st.button(
-        f"Aset SAP tiada di eAsset\n\n{sap_missing['No Aset'].nunique():,}",
-        key="kpi_sap",
-        use_container_width=True,
-    ):
-        select_kpi_report("SAP")
-        st.rerun()
-with m2:
-    if st.button(
-        f"Aset eAsset tiada di SAP\n\n{easset_missing['No Aset'].nunique():,}",
-        key="kpi_easset",
-        use_container_width=True,
-    ):
-        select_kpi_report("eAsset")
-        st.rerun()
-with m3:
-    if st.button(
-        f"Aset Berlainan Lokasi\n\n{len(lokasi):,}",
-        key="kpi_lokasi",
-        use_container_width=True,
-    ):
-        select_kpi_report("Lokasi Berlainan")
-        st.rerun()
+# PAGE 1: KPI dan bar chart
+with st.container(key="page_one"):
+    # KPI boleh diklik untuk memaparkan laporan berkaitan.
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        if st.button(
+            f"Aset SAP tiada di eAsset\n\n{sap_missing['No Aset'].nunique():,}",
+            key="kpi_sap",
+            use_container_width=True,
+        ):
+            select_kpi_report("SAP")
+            st.rerun()
+    with m2:
+        if st.button(
+            f"Aset eAsset tiada di SAP\n\n{easset_missing['No Aset'].nunique():,}",
+            key="kpi_easset",
+            use_container_width=True,
+        ):
+            select_kpi_report("eAsset")
+            st.rerun()
+    with m3:
+        if st.button(
+            f"Aset Berlainan Lokasi\n\n{len(lokasi):,}",
+            key="kpi_lokasi",
+            use_container_width=True,
+        ):
+            select_kpi_report("Lokasi Berlainan")
+            st.rerun()
 
-c1, c2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-sap_chart = (
-    sap_missing.assign(PTJ=sap_missing["PTJ SAP"].fillna("Tidak Dikenal Pasti"))
-    .groupby("PTJ", as_index=False)["No Aset"]
-    .nunique()
-    .rename(columns={"No Aset": "Bilangan"})
-    .sort_values("Bilangan", ascending=False)
-)
-
-if sap_chart.empty:
-    c1.info("Tiada rekod Aset SAP tiada di eAsset untuk penapis dipilih.")
-else:
-    fig_sap = px.bar(
-        sap_chart,
-        x="PTJ",
-        y="Bilangan",
-        text="Bilangan",
-        title="Aset SAP",
+    sap_chart = (
+        sap_missing.assign(PTJ=sap_missing["PTJ SAP"].fillna("Tidak Dikenal Pasti"))
+        .groupby("PTJ", as_index=False)["No Aset"]
+        .nunique()
+        .rename(columns={"No Aset": "Bilangan"})
+        .sort_values("Bilangan", ascending=False)
     )
-    fig_sap.update_traces(textposition="outside", cliponaxis=False)
-    fig_sap.update_layout(
-        xaxis_title=None,
-        yaxis_title=None,
-        showlegend=False,
-        margin=dict(t=60, l=20, r=20, b=120),
-    )
-    with c1:
-        st.plotly_chart(
-            fig_sap,
-            width="stretch",
-            key="sap_bar_chart",
-            on_select=handle_sap_chart_selection,
-            selection_mode="points",
-            config={"displayModeBar": False},
+
+    if sap_chart.empty:
+        c1.info("Tiada rekod Aset SAP tiada di eAsset untuk penapis dipilih.")
+    else:
+        fig_sap = px.bar(
+            sap_chart,
+            x="PTJ",
+            y="Bilangan",
+            text="Bilangan",
+            title="Aset SAP",
         )
-
-easset_chart = (
-    easset_missing.assign(PTJ=easset_missing["PTJ eAsset"].fillna("Tidak Dikenal Pasti"))
-    .groupby("PTJ", as_index=False)["No Aset"]
-    .nunique()
-    .rename(columns={"No Aset": "Bilangan"})
-    .sort_values("Bilangan", ascending=False)
-)
-
-if easset_chart.empty:
-    c2.info("Tiada rekod Aset eAsset tiada di SAP untuk penapis dipilih.")
-else:
-    fig_easset = px.bar(
-        easset_chart,
-        x="PTJ",
-        y="Bilangan",
-        text="Bilangan",
-        title="Aset eAsset",
-    )
-    fig_easset.update_traces(textposition="outside", cliponaxis=False)
-    fig_easset.update_layout(
-        xaxis_title=None,
-        yaxis_title=None,
-        showlegend=False,
-        margin=dict(t=60, l=20, r=20, b=120),
-    )
-    with c2:
-        st.plotly_chart(
-            fig_easset,
-            width="stretch",
-            key="easset_bar_chart",
-            on_select=handle_easset_chart_selection,
-            selection_mode="points",
-            config={"displayModeBar": False},
+        fig_sap.update_traces(textposition="outside", cliponaxis=False)
+        fig_sap.update_layout(
+            xaxis_title=None,
+            yaxis_title=None,
+            showlegend=False,
+            margin=dict(t=60, l=20, r=20, b=120),
         )
+        with c1:
+            st.plotly_chart(
+                fig_sap,
+                width="stretch",
+                key="sap_bar_chart",
+                on_select=handle_sap_chart_selection,
+                selection_mode="points",
+                config={"displayModeBar": False},
+            )
 
-# Apabila bar PTJ diklik, semua laporan di bawah akan ikut PTJ tersebut.
-report_ptj = st.session_state.get("chart_selected_ptj")
-report_source = st.session_state.get("chart_selected_source")
+    easset_chart = (
+        easset_missing.assign(PTJ=easset_missing["PTJ eAsset"].fillna("Tidak Dikenal Pasti"))
+        .groupby("PTJ", as_index=False)["No Aset"]
+        .nunique()
+        .rename(columns={"No Aset": "Bilangan"})
+        .sort_values("Bilangan", ascending=False)
+    )
 
-sap_report_data = sap_missing.copy()
-easset_report_data = easset_missing.copy()
-lokasi_report_data = lokasi.copy()
+    if easset_chart.empty:
+        c2.info("Tiada rekod Aset eAsset tiada di SAP untuk penapis dipilih.")
+    else:
+        fig_easset = px.bar(
+            easset_chart,
+            x="PTJ",
+            y="Bilangan",
+            text="Bilangan",
+            title="Aset eAsset",
+        )
+        fig_easset.update_traces(textposition="outside", cliponaxis=False)
+        fig_easset.update_layout(
+            xaxis_title=None,
+            yaxis_title=None,
+            showlegend=False,
+            margin=dict(t=60, l=20, r=20, b=120),
+        )
+        with c2:
+            st.plotly_chart(
+                fig_easset,
+                width="stretch",
+                key="easset_bar_chart",
+                on_select=handle_easset_chart_selection,
+                selection_mode="points",
+                config={"displayModeBar": False},
+            )
 
-if report_ptj:
-    sap_report_data = sap_report_data[
-        sap_report_data["PTJ SAP"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
-    ]
-    easset_report_data = easset_report_data[
-        easset_report_data["PTJ eAsset"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
-    ]
-    lokasi_report_data = lokasi_report_data[
-        lokasi_report_data["PTJ SAP"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
-        | lokasi_report_data["PTJ eAsset"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
-    ]
 
-st.markdown("### Laporan")
-kpi_report = st.session_state.get("kpi_selected_report")
+# PAGE 2: Laporan
+with st.container(key="page_two"):
+    # Apabila bar PTJ diklik, semua laporan di bawah akan ikut PTJ tersebut.
+    report_ptj = st.session_state.get("chart_selected_ptj")
+    report_source = st.session_state.get("chart_selected_source")
 
-if report_ptj or kpi_report:
-    info_col, reset_col = st.columns([5, 1])
+    sap_report_data = sap_missing.copy()
+    easset_report_data = easset_missing.copy()
+    lokasi_report_data = lokasi.copy()
+
     if report_ptj:
-        info_col.info(f"Laporan ditapis mengikut bar {report_source}: {report_ptj}")
-    elif kpi_report:
-        info_col.info(f"Laporan dipilih melalui KPI: {kpi_report}")
-    if reset_col.button("Papar Semua", use_container_width=True):
-        clear_chart_selection()
-        st.rerun()
+        sap_report_data = sap_report_data[
+            sap_report_data["PTJ SAP"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
+        ]
+        easset_report_data = easset_report_data[
+            easset_report_data["PTJ eAsset"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
+        ]
+        lokasi_report_data = lokasi_report_data[
+            lokasi_report_data["PTJ SAP"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
+            | lokasi_report_data["PTJ eAsset"].fillna("Tidak Dikenal Pasti").eq(report_ptj)
+        ]
 
-sap_report_cols = [
-    "No Aset",
-    "Nama Aset",
-    "Deskripsi Ringkas",
-    "Eval Group SAP",
-    "PTJ SAP",
-    "Sub No",
-    "Nilai Perolehan SAP",
-    "Nilai Buku SAP",
-]
-sap_report = sap_report_data[[c for c in sap_report_cols if c in sap_report_data.columns]].copy()
+    st.markdown("### Laporan")
+    kpi_report = st.session_state.get("kpi_selected_report")
 
-easset_report_cols = [
-    "No Aset",
-    "No. Siri Pendaftaran",
-    "Jenis",
-    "Jenama",
-    "Lokasi",
-    "Pegawai Penempatan",
-    "No. Pesanan",
-    "Tarikh Beli",
-    "Nilai eAsset",
-    "Eval Group eAsset",
-    "PTJ eAsset",
-]
-easset_report = easset_report_data[[c for c in easset_report_cols if c in easset_report_data.columns]].copy()
+    if report_ptj or kpi_report:
+        info_col, reset_col = st.columns([5, 1])
+        if report_ptj:
+            info_col.info(f"Laporan ditapis mengikut bar {report_source}: {report_ptj}")
+        elif kpi_report:
+            info_col.info(f"Laporan dipilih melalui KPI: {kpi_report}")
+        if reset_col.button("Papar Semua", use_container_width=True):
+            clear_chart_selection()
+            st.rerun()
 
-if kpi_report == "SAP":
-    st.subheader("SAP")
-    st.dataframe(sap_report, use_container_width=True, hide_index=True, height=500)
-    st.download_button(
-        "Muat Turun Laporan SAP",
-        data=excel_bytes({"SAP tiada di eAsset": sap_report}),
-        file_name="laporan_aset_sap_tiada_di_easset.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-elif kpi_report == "eAsset":
-    st.subheader("eAsset")
-    st.dataframe(easset_report, use_container_width=True, hide_index=True, height=500)
-    st.download_button(
-        "Muat Turun Laporan eAsset",
-        data=excel_bytes({"eAsset tiada di SAP": easset_report}),
-        file_name="laporan_aset_easset_tiada_di_sap.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-elif kpi_report == "Lokasi Berlainan":
-    st.subheader("Lokasi Berlainan")
-    st.dataframe(lokasi_report_data, use_container_width=True, hide_index=True, height=500)
-    st.download_button(
-        "Muat Turun Laporan Lokasi Berlainan",
-        data=excel_bytes({"Lokasi Berlainan": lokasi_report_data}),
-        file_name="laporan_aset_lokasi_berlainan.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-else:
-    tab_sap, tab_easset, tab_lokasi = st.tabs(["SAP", "eAsset", "Lokasi Berlainan"])
+    sap_report_cols = [
+        "No Aset",
+        "Nama Aset",
+        "Deskripsi Ringkas",
+        "Eval Group SAP",
+        "PTJ SAP",
+        "Sub No",
+        "Nilai Perolehan SAP",
+        "Nilai Buku SAP",
+    ]
+    sap_report = sap_report_data[[c for c in sap_report_cols if c in sap_report_data.columns]].copy()
 
-    with tab_sap:
+    easset_report_cols = [
+        "No Aset",
+        "No. Siri Pendaftaran",
+        "Jenis",
+        "Jenama",
+        "Lokasi",
+        "Pegawai Penempatan",
+        "No. Pesanan",
+        "Tarikh Beli",
+        "Nilai eAsset",
+        "Eval Group eAsset",
+        "PTJ eAsset",
+    ]
+    easset_report = easset_report_data[[c for c in easset_report_cols if c in easset_report_data.columns]].copy()
+
+    if kpi_report == "SAP":
+        st.subheader("SAP")
         st.dataframe(sap_report, use_container_width=True, hide_index=True, height=500)
         st.download_button(
             "Muat Turun Laporan SAP",
@@ -475,8 +478,8 @@ else:
             file_name="laporan_aset_sap_tiada_di_easset.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-    with tab_easset:
+    elif kpi_report == "eAsset":
+        st.subheader("eAsset")
         st.dataframe(easset_report, use_container_width=True, hide_index=True, height=500)
         st.download_button(
             "Muat Turun Laporan eAsset",
@@ -484,8 +487,8 @@ else:
             file_name="laporan_aset_easset_tiada_di_sap.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-    with tab_lokasi:
+    elif kpi_report == "Lokasi Berlainan":
+        st.subheader("Lokasi Berlainan")
         st.dataframe(lokasi_report_data, use_container_width=True, hide_index=True, height=500)
         st.download_button(
             "Muat Turun Laporan Lokasi Berlainan",
@@ -493,16 +496,45 @@ else:
             file_name="laporan_aset_lokasi_berlainan.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+    else:
+        tab_sap, tab_easset, tab_lokasi = st.tabs(["SAP", "eAsset", "Lokasi Berlainan"])
 
-st.download_button(
-    "Muat Turun Semua Laporan",
-    data=excel_bytes(
-        {
-            "SAP tiada di eAsset": sap_report,
-            "eAsset tiada di SAP": easset_report,
-            "Lokasi Berlainan": lokasi_report_data,
-        }
-    ),
-    file_name="laporan_perbandingan_aset.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
+        with tab_sap:
+            st.dataframe(sap_report, use_container_width=True, hide_index=True, height=500)
+            st.download_button(
+                "Muat Turun Laporan SAP",
+                data=excel_bytes({"SAP tiada di eAsset": sap_report}),
+                file_name="laporan_aset_sap_tiada_di_easset.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+        with tab_easset:
+            st.dataframe(easset_report, use_container_width=True, hide_index=True, height=500)
+            st.download_button(
+                "Muat Turun Laporan eAsset",
+                data=excel_bytes({"eAsset tiada di SAP": easset_report}),
+                file_name="laporan_aset_easset_tiada_di_sap.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+        with tab_lokasi:
+            st.dataframe(lokasi_report_data, use_container_width=True, hide_index=True, height=500)
+            st.download_button(
+                "Muat Turun Laporan Lokasi Berlainan",
+                data=excel_bytes({"Lokasi Berlainan": lokasi_report_data}),
+                file_name="laporan_aset_lokasi_berlainan.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+    st.download_button(
+        "Muat Turun Semua Laporan",
+        data=excel_bytes(
+            {
+                "SAP tiada di eAsset": sap_report,
+                "eAsset tiada di SAP": easset_report,
+                "Lokasi Berlainan": lokasi_report_data,
+            }
+        ),
+        file_name="laporan_perbandingan_aset.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
